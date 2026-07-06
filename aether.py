@@ -132,14 +132,18 @@ def dist3(a, b):
     return math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2)
 
 
-def count_fingers(lm, handedness_label):
+def count_fingers(lm):
+    """Count extended fingers from 21 hand landmarks.
+
+    Orientation-independent: doesn't rely on the "Left"/"Right" handedness
+    label (which can come back flipped depending on whether the frame fed to
+    the detector was mirrored). The thumb is judged by how far it has moved
+    away from the palm (toward the pinky side) rather than by absolute x
+    direction, so it works the same for either hand.
+    """
     c = 0
-    if handedness_label == "Right":
-        if lm[4].x < lm[3].x:
-            c += 1
-    else:
-        if lm[4].x > lm[3].x:
-            c += 1
+    if dist3(lm[4], lm[17]) > dist3(lm[3], lm[17]):
+        c += 1
     for t, p in zip(TIP, PIP):
         if lm[t].y < lm[p].y:
             c += 1
@@ -264,7 +268,6 @@ class Aether:
 
         elif self.num_hands == 1:
             lm = hands[0]
-            label = handed[0][0].category_name if handed and handed[0] else "Right"
 
             palm = lm[9]
             screen_x = 1 - palm.x   # mirror to match visual mirror
@@ -273,7 +276,7 @@ class Aether:
             dy = (0.5 - screen_y) * 2
             self.hand_target[:] = (dx, dy)
 
-            fc = count_fingers(lm, label)
+            fc = count_fingers(lm)
             if fc != self.finger_count:
                 self.finger_count = fc
                 self.target_color[:] = FINGER_COLORS[min(5, max(0, fc))]
@@ -382,11 +385,15 @@ class Aether:
     def draw_webcam_background(self, frame_bgr):
         w, h = self.screen.get_size()
         frame = cv2.resize(frame_bgr, (w, h))
-        frame = cv2.flip(frame, 1)
+        frame = cv2.flip(frame, 1)                    # mirror horizontally
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frame = np.rot90(frame)
+        # pygame.surfarray.make_surface wants shape (width, height, 3), i.e.
+        # array[x, y] = pixel. cv2 frames are (height, width, 3), i.e.
+        # frame[y, x] = pixel. Swap the first two axes (a transpose) rather
+        # than rotate — np.rot90 here would spin the image 90 degrees, which
+        # is what caused the upside-down/sideways background before.
+        frame = np.transpose(frame, (1, 0, 2))
         surf = pygame.surfarray.make_surface(frame)
-        surf = pygame.transform.flip(surf, False, True)
         self.screen.blit(surf, (0, 0))
         dark = pygame.Surface((w, h), pygame.SRCALPHA)
         dark.fill((10, 11, 13, 150))
